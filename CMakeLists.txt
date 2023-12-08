@@ -2,5 +2,4 @@ cmake_minimum_required(VERSION 3.18)
 project(xgb_chf_c LANGUAGES C CXX VERSION 0.0)
 find_package(xgboost REQUIRED)
 add_executable(xgb_chf_c xgb_c_test.c)
-target_link_libraries(xgb_chf_c xgboost::xgboost)
-
+target_link_libraries(xgb_chf_c xgboost::xgboost -lm)
