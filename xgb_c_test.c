@@ -12,25 +12,24 @@
   } \
 }
 
-/* Define a function to get cfun, hfun @ Z=0 */
-void xgb_get_chf(const float *Tem, const float *Hden, const float *Plw, const float *Ph1, const float *Pg1,
-		 const float *Pc6, float *cfun, float *hfun, int *err) {
-  /* Create needed XGBoost Booster objects to hold CF, HF models */
-  BoosterHandle cf_booster, hf_booster;
-  /* Create an XGBoost DMatrix object to hold the set of features for the XGBoost models */
-  DMatrixHandle feat_dmatrix;
-
-  /* Set path to CF, HF models */
-  const char *cf_model_path = "/nfs/turbo/lsa-cavestru/dbrobins/ml_chf/models/gh12_rates/all_data/CF_Z_0/trained_model.txt";
-  const	char *hf_model_path = "/nfs/turbo/lsa-cavestru/dbrobins/ml_chf/models/gh12_rates/all_data/HF_Z_0/trained_model.txt";
-
-  /* Create CF, HF boosters */
-  safe_xgboost(XGBoosterCreate(NULL, 0, &cf_booster));
-  safe_xgboost(XGBoosterCreate(NULL, 0, &hf_booster));
+/* Define a function to get CF, HF boosters */
+void xgb_get_models(const char *cf_model_path, const char *hf_model_path,
+		    BoosterHandle *cf_booster, BoosterHandle *hf_booster) {
+  /* Create CF, HF boosters at the designated handles */
+  safe_xgboost(XGBoosterCreate(NULL, 0, cf_booster));
+  safe_xgboost(XGBoosterCreate(NULL, 0, hf_booster));
 
   /* Read in the CF, HF models */
-  safe_xgboost(XGBoosterLoadModel(cf_booster, cf_model_path));
-  safe_xgboost(XGBoosterLoadModel(hf_booster, hf_model_path));
+  safe_xgboost(XGBoosterLoadModel(*cf_booster, cf_model_path));
+  safe_xgboost(XGBoosterLoadModel(*hf_booster, hf_model_path));
+}
+
+/* Define a function to get cfun, hfun @ Z=0 */
+void xgb_get_chf(const float *Tem, const float *Hden, const float *Plw, const float *Ph1,
+		 const float *Pg1, const float *Pc6, BoosterHandle *cf_booster, BoosterHandle *hf_booster,
+		 float *cfun, float *hfun, int *err) {
+  /* Create an XGBoost DMatrix object to hold the set of features for the XGBoost models */
+  DMatrixHandle feat_dmatrix;
 
   /* Calculate and scale features */
   float t_feat = (log10(*Tem) - (1.000000)) / (9.000000 - (1.000000));
@@ -57,22 +56,21 @@ void xgb_get_chf(const float *Tem, const float *Hden, const float *Plw, const fl
     "\"iteration_begin\": 0, \"iteration_end\": 0, \"strict_shape\": false}";
 
   /* Get predictions for CF, HF */
-  safe_xgboost(XGBoosterPredictFromDMatrix(cf_booster, feat_dmatrix, config, &out_shape, &out_dim, &log_cf));
-  safe_xgboost(XGBoosterPredictFromDMatrix(hf_booster, feat_dmatrix, config, &out_shape, &out_dim, &log_hf));
+  safe_xgboost(XGBoosterPredictFromDMatrix(*cf_booster, feat_dmatrix, config, &out_shape, &out_dim, &log_cf));
+  safe_xgboost(XGBoosterPredictFromDMatrix(*hf_booster, feat_dmatrix, config, &out_shape, &out_dim, &log_hf));
   
   /* Compute CF, HF from logs */
   *cfun = pow(10.0, *log_cf);
   *hfun = pow(10.0, *log_hf);
+  printf("%10.6E % 10.6E\n", *cfun, *hfun);
 
   /* Free the memory */
-  XGBoosterFree(cf_booster);
-  XGBoosterFree(hf_booster);
   XGDMatrixFree(feat_dmatrix);
 }
 
 
 /* Declare relevant variables */
-float Tem, Hden, Plw, Ph1, Pg1, Pc6, cfun, hfun;
+float Tem, Hden, Plw, Ph1, Pg1, Pc6;
 int ierr;
 float alt;
 
@@ -83,18 +81,35 @@ int main(int argc, char *argv[]) {
   Pg1 = 2.76947e-14;
   Pc6 = 1.03070e-17;
 
+  float cfun, hfun;
+  BoosterHandle cf_booster, hf_booster;
+
+  /* Set path to CF, HF models */
+  const char *cf_model_path = "/nfs/turbo/lsa-cavestru/dbrobins/ml_chf/models/gh12_rates/all_data/CF_Z_0/trained_model.txt";
+  const	char *hf_model_path = "/nfs/turbo/lsa-cavestru/dbrobins/ml_chf/models/gh12_rates/all_data/HF_Z_0/trained_model.txt";
+
+  xgb_get_models(cf_model_path, hf_model_path, &cf_booster, &hf_booster);
+  
   alt = 1.0;
   while(alt < 9.0) {
     Tem = pow(10.0, alt);
-
-    xgb_get_chf(&Tem, &Hden, &Plw, &Ph1, &Pg1, &Pc6, &cfun, &hfun, &ierr);
+    printf("Before: %3.1f %10.6E %10.6E\n", alt, cfun, hfun);
+    xgb_get_chf(&Tem, &Hden, &Plw, &Ph1, &Pg1, &Pc6, &cf_booster, &hf_booster, &cfun, &hfun, &ierr);
     if (ierr != 0)
       printf("Error in evaluating XGBoost model");
-
-    printf("%3.1f %10.3E %10.3E\n", alt, cfun, hfun);
+    printf("After: %3.1f %10.6E %10.6E\n", alt, cfun, hfun);
 
     alt = alt + 0.1;
   }
+  
+  /*
+  Tem = pow(10.0, 94);
+  xgb_get_chf(&Tem, &Hden, &Plw, &Ph1, &Pg1, &Pc6, &cf_booster, &hf_booster, &cfun, &hfun, &ierr);
+  printf("%f %10.6E %10.6E\n", Tem, cfun, hfun);
+  */
+  XGBoosterFree(cf_booster);
+  XGBoosterFree(hf_booster);
+  
   return 0;
 }
 
