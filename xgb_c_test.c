@@ -24,6 +24,8 @@ void xgb_get_models(const char *cf_model_path, const char *hf_model_path,
   safe_xgboost(XGBoosterLoadModel(*hf_booster, hf_model_path));
 }
 
+const float *log_cf, *log_hf;
+
 /* Define a function to get cfun, hfun @ Z=0 */
 void xgb_get_chf(const float *Tem, const float *Hden, const float *Plw, const float *Ph1,
 		 const float *Pg1, const float *Pc6, BoosterHandle *cf_booster, BoosterHandle *hf_booster,
@@ -38,6 +40,10 @@ void xgb_get_chf(const float *Tem, const float *Hden, const float *Plw, const fl
   float q_hi_feat = (log10(*Ph1 / *Plw) - (-6.911031)) / (0.481141 - (-6.911031));
   float q_hei_feat = (log10(*Pg1 / *Plw) - (-5.551412)) / (0.717863 - (-5.551412));
   float q_cvi_feat = (log10(*Pc6 / *Plw) - (-9.017760)) / (-1.062396 - (-9.017760));
+  /* To correct round-off error for T points in training set */
+  /* t_feat = t_feat + 1e-4; */
+  /* Make sure t_feat is not exactly 0 (this produces an edge case error */
+  if(t_feat <= 0) t_feat = 1.0e-30;
   
   /* Set up feature DMatrix */
   float feats[6] = {t_feat, n_h_feat, q_lw_feat, q_hi_feat, q_hei_feat, q_cvi_feat};
@@ -46,23 +52,18 @@ void xgb_get_chf(const float *Tem, const float *Hden, const float *Plw, const fl
   /* Set up shape of the output */
   uint64_t const* out_shape;
   uint64_t out_dim;
-
-  /* Set up pointers to hold log(CF), log(HF) */
-  float const *log_cf, *log_hf;
   
   /* Configuration information about the booster */
   char const config[] =
     "{\"training\": false, \"type\": 0, "
     "\"iteration_begin\": 0, \"iteration_end\": 0, \"strict_shape\": false}";
-
-  /* Get predictions for CF, HF */
+  
+  /* Get predictions for log CF, HF */
   safe_xgboost(XGBoosterPredictFromDMatrix(*cf_booster, feat_dmatrix, config, &out_shape, &out_dim, &log_cf));
   safe_xgboost(XGBoosterPredictFromDMatrix(*hf_booster, feat_dmatrix, config, &out_shape, &out_dim, &log_hf));
-  
-  /* Compute CF, HF from logs */
+
   *cfun = pow(10.0, *log_cf);
   *hfun = pow(10.0, *log_hf);
-  printf("%10.6E % 10.6E\n", *cfun, *hfun);
 
   /* Free the memory */
   XGDMatrixFree(feat_dmatrix);
@@ -93,11 +94,11 @@ int main(int argc, char *argv[]) {
   alt = 1.0;
   while(alt < 9.0) {
     Tem = pow(10.0, alt);
-    printf("Before: %3.1f %10.6E %10.6E\n", alt, cfun, hfun);
+    /* printf("Before: %3.1f %10.6E %10.6E\n", alt, cfun, hfun); */
     xgb_get_chf(&Tem, &Hden, &Plw, &Ph1, &Pg1, &Pc6, &cf_booster, &hf_booster, &cfun, &hfun, &ierr);
     if (ierr != 0)
       printf("Error in evaluating XGBoost model");
-    printf("After: %3.1f %10.6E %10.6E\n", alt, cfun, hfun);
+    printf("%3.1f %10.6E %10.6E\n", alt, cfun, hfun);
 
     alt = alt + 0.1;
   }
